@@ -1,0 +1,80 @@
+name: fluento
+
+x-backend-env: &backend-env
+  NODE_ENV: production
+  MONGODB_URI: mongodb://mongo:27017/fluento
+  REDIS_URL: redis://redis:6379
+  JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env (32+ random characters)}
+  CLIENT_ORIGIN: ${APP_URL:-http://localhost:8080}
+  APP_URL: ${APP_URL:-http://localhost:8080}
+  COOKIE_SECURE: ${COOKIE_SECURE:-false}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_TRANSCRIBE_MODEL: ${OPENAI_TRANSCRIBE_MODEL:-whisper-1}
+  OPENAI_EVAL_MODEL: ${OPENAI_EVAL_MODEL:-gpt-4o-mini}
+  STORAGE_DIR: /data/private-storage
+  MAX_AUDIO_MB: ${MAX_AUDIO_MB:-25}
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASS: ${SMTP_PASS:-}
+  MAIL_FROM: ${MAIL_FROM:-Fluento <no-reply@fluento.app>}
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes: [mongo-data:/data/db]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    environment: *backend-env
+    volumes: [audio-data:/data/private-storage]
+    depends_on:
+      mongo: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    environment: *backend-env
+    volumes: [audio-data:/data/private-storage]
+    depends_on:
+      mongo: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports: ["${HTTP_PORT:-8080}:80"]
+    volumes: ["./nginx/nginx.conf:/etc/nginx/nginx.conf:ro"]
+    depends_on:
+      backend: { condition: service_healthy }
+      frontend: { condition: service_healthy }
+
+volumes:
+  mongo-data:
+  redis-data:
+  audio-data:
